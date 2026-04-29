@@ -148,17 +148,38 @@ except:
 ARQUIVO_JSON = "cnpjs.json"
 
 def carregar_cnpjs():
-    """Retorna (lista_cnpjs, cnpj_ativo)"""
+    """Retorna (lista_cnpjs, cnpj_ativo) – nunca retorna lista vazia."""
     if usar_supabase:
         try:
             dados = supabase.select("cnpjs", query={"select": "*", "order": "id"})
             cnpjs_lista = [{"nome": d["nome"], "cnpj": d["cnpj"]} for d in dados]
             cnpj_ativo = cnpjs_lista[0]["cnpj"] if cnpjs_lista else ""
-            return cnpjs_lista, cnpj_ativo
         except Exception as e:
             st.error(f"Falha ao carregar CNPJs do banco: {e}")
-            return [], ""
+            cnpjs_lista = []
+            cnpj_ativo = ""
+
+        # Se o banco estiver vazio (primeiro uso), usa a lista padrão E insere no banco
+        if not cnpjs_lista:
+            padrao = [
+                {"nome": "CIELO", "cnpj": "01027058000191"},
+                {"nome": "REDE", "cnpj": "03145212000133"},
+                {"nome": "GETNET", "cnpj": "10440482000154"},
+                {"nome": "STONE", "cnpj": "16501555000157"},
+                {"nome": "PAGSEGURO", "cnpj": "08561701000101"}
+            ]
+            cnpjs_lista = padrao
+            cnpj_ativo = padrao[0]["cnpj"]
+            # Insere no banco para que da próxima vez já existam
+            try:
+                for c in padrao:
+                    supabase.insert("cnpjs", {"nome": c["nome"], "cnpj": c["cnpj"]})
+            except:
+                pass  # silencia, mas já temos os dados locais
+        return cnpjs_lista, cnpj_ativo
+
     else:
+        # Fallback: JSON local (código original que você já tinha)
         if os.path.exists(ARQUIVO_JSON):
             with open(ARQUIVO_JSON, "r", encoding="utf-8") as f:
                 dados = json.load(f)
@@ -215,8 +236,12 @@ if "regras" not in st.session_state:
     st.session_state.regras = carregar_regras()
 
 def obter_cnpj_ativo():
+    lista = st.session_state.cnpjs
     idx = st.session_state.cnpj_selecionado
-    return st.session_state.cnpjs[idx]["cnpj"]
+    if lista and 0 <= idx < len(lista):
+        return lista[idx]["cnpj"]
+    # Fallback de segurança: se a lista estiver vazia ou índice inválido
+    return "01027058000191"
 
 def persistir_cnpjs_local():
     """Grava a lista de CNPJs no arquivo JSON (usado no modo offline)"""
