@@ -636,7 +636,7 @@ elif st.session_state.pagina == "total":
     except:
         pass
 
-    st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor de Total NF-e</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor da Corretor da Rejeicao: Total do Produto / Servico difere do somatório dos itens</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #adb5bd;'>Recalcula a soma dos itens e ajusta os campos vProd, vNF e vNFTot (se existir).</p>", unsafe_allow_html=True)
 
     NS = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
