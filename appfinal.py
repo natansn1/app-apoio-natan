@@ -9,6 +9,10 @@ import os
 import re
 from datetime import datetime, timedelta
 import requests
+from decimal import Decimal, getcontext
+
+# Configuração de precisão decimal para evitar erros de arredondamento
+getcontext().prec = 28
 
 # ========================
 # CONFIGURAÇÃO INICIAL
@@ -284,7 +288,7 @@ if st.session_state.pagina == "home":
     st.markdown("<h1 style='text-align: center; margin: 2rem 0;'>APOIO - NATAN</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #adb5bd; font-size: 1.1rem;'>Ferramentas projetadas com o intuito de auxiliar no dia a dia.</p>", unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         if st.button("🛡️ Corretor de\nEstrutura de Cartão no XML", use_container_width=True):
             st.session_state.pagina = "cartao"
@@ -296,6 +300,10 @@ if st.session_state.pagina == "home":
     with col3:
         if st.button("🕒 Corretor de\nTS_NULL", use_container_width=True):
             st.session_state.pagina = "tsnull"
+            st.rerun()
+    with col4:
+        if st.button("🧾 Corretor de\nTotal NF-e", use_container_width=True):
+            st.session_state.pagina = "total"
             st.rerun()
 
     st.markdown("""
@@ -609,6 +617,144 @@ elif st.session_state.pagina == "promocoes":
                     st.info(f"ℹ️ {uploaded_file.name}: Nenhum código de produto corresponde às regras.")
             except Exception as e:
                 st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
+
+# ========================
+# PÁGINA CORRETOR DE TOTAL NF-e
+# ========================
+elif st.session_state.pagina == "total":
+    st.markdown('<div class="back-button">', unsafe_allow_html=True)
+    if st.button("⬅️ Voltar para tela Inicial"):
+        st.session_state.pagina = "home"
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    try:
+        logo = Image.open(logo_file)
+        col1, col2, col3 = st.columns([1, 0.2, 1])
+        with col2:
+            st.image(logo, use_container_width=True)
+    except:
+        pass
+
+    st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor de Total NF-e</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Recalcula a soma dos itens e ajusta os campos vProd, vNF e vNFTot (se existir).</p>", unsafe_allow_html=True)
+
+    NS = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+    ET.register_namespace('', "http://www.portalfiscal.inf.br/nfe")
+
+    uploaded_files = st.file_uploader("📂 Selecione um ou mais arquivos XML", type="xml", accept_multiple_files=True)
+
+    if uploaded_files:
+        ajustados_zip = io.BytesIO()
+        arquivos_para_zip = []
+
+        for uploaded_file in uploaded_files:
+            try:
+                tree = ET.parse(uploaded_file)
+                root = tree.getroot()
+
+                # 1. Soma todos os <vProd> dentro de <det>
+                soma_total = Decimal('0')
+                for det in root.findall(".//ns:det", NS):
+                    vprod_elem = det.find(".//ns:vProd", NS)
+                    if vprod_elem is not None and vprod_elem.text:
+                        try:
+                            valor = Decimal(vprod_elem.text.strip())
+                            soma_total += valor
+                        except:
+                            pass
+                total_corrigido = soma_total.quantize(Decimal('0.01'))
+
+                # 2. Localiza ICMSTot
+                icms_tot = root.find(".//ns:ICMSTot", NS)
+                if icms_tot is None:
+                    st.warning(f"⚠️ {uploaded_file.name}: Tag <ICMSTot> não encontrada. Ignorado.")
+                    continue
+
+                # 3. Captura valores originais para exibição
+                vProd_elem = icms_tot.find("ns:vProd", NS)
+                vProd_original = vProd_elem.text.strip() if vProd_elem is not None and vProd_elem.text else None
+
+                # 4. Remove <vNF> antigo (case‑insensitive) e guarda o valor original
+                ns = NS['ns']
+                vNF_original = None
+                for child in list(icms_tot):
+                    if child.tag.lower() == f"{{{ns}}}vnf":
+                        vNF_original = child.text.strip() if child.text else None
+                        icms_tot.remove(child)
+                        break
+
+                # 5. Verifica se precisa corrigir
+                precisa = False
+                try:
+                    if vProd_original is None or abs(Decimal(vProd_original) - total_corrigido) > Decimal('0.01'):
+                        precisa = True
+                    if vNF_original is None or abs(Decimal(vNF_original) - total_corrigido) > Decimal('0.01'):
+                        precisa = True
+                except:
+                    precisa = True
+
+                if not precisa:
+                    st.info(f"ℹ️ {uploaded_file.name}: Total já está correto (R$ {total_corrigido:.2f}).")
+                    continue
+
+                # 6. Ajusta <vProd>
+                if vProd_elem is None:
+                    vProd_elem = ET.SubElement(icms_tot, "vProd")
+                vProd_elem.text = f"{total_corrigido:.2f}"
+
+                # 7. Cria novo <vNF> correto
+                vNF_novo = ET.SubElement(icms_tot, "vNF")
+                vNF_novo.text = f"{total_corrigido:.2f}"
+
+                # 8. Atualiza qualquer tag <vNFTot> existente no documento (case‑insensitive)
+                #    (mantém a tag, apenas corrige o valor para total_corrigido)
+                for elem in root.iter():
+                    if 'vnftot' in elem.tag.lower():
+                        elem.text = f"{total_corrigido:.2f}"
+
+                # 9. Serializa o XML corrigido
+                out = io.BytesIO()
+                tree.write(out, encoding="utf-8", xml_declaration=True)
+                xml_data = out.getvalue()
+
+                # 10. Interface de comparação e download individual
+                with st.expander(f"✅ {uploaded_file.name} - Corrigido"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.caption("🔴 VALORES ORIGINAIS")
+                        st.code(f"vProd (ICMSTot): {vProd_original}\nvNF (ICMSTot): {vNF_original}", language="text")
+                    with col2:
+                        st.caption("🟢 VALORES CORRIGIDOS")
+                        st.code(f"vProd (ICMSTot): {total_corrigido:.2f}\nvNF (ICMSTot): {total_corrigido:.2f}", language="text")
+                    st.download_button(
+                        label="📥 Baixar XML Corrigido",
+                        data=xml_data,
+                        file_name=f"XML_Corrigido_{uploaded_file.name}",
+                        key=f"total_{uploaded_file.name}"
+                    )
+                arquivos_para_zip.append((f"XML_Corrigido_{uploaded_file.name}", xml_data))
+
+            except Exception as e:
+                st.error(f"❌ Erro no arquivo {uploaded_file.name}: {e}")
+
+        # Zip final com todos os corrigidos
+        if arquivos_para_zip:
+            st.divider()
+            with zipfile.ZipFile(ajustados_zip, "w") as zf:
+                for nome, dado in arquivos_para_zip:
+                    zf.writestr(nome, dado)
+            st.markdown('<div class="zip-download">', unsafe_allow_html=True)
+            st.download_button(
+                label="📦 BAIXAR TODOS OS CORRIGIDOS (.ZIP)",
+                data=ajustados_zip.getvalue(),
+                file_name="Pacote_Total_XML_Corrigido.zip",
+                use_container_width=True,
+                key="zip_total"
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("ℹ️ Nenhum arquivo precisou de correção. ZIP não será gerado.")
 
 # ========================
 # PÁGINA CORRETOR DE TS_NULL NAS EVENTS
