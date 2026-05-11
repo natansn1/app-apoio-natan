@@ -1,0 +1,23 @@
+name: Wake Streamlit App
+on:
+  schedule:
+    # Executa a cada 4 horas
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install selenium webdriver-manager
+      - name: Keep Streamlit awake
+        env:
+          STREAMLIT_APP_URL: ${{ secrets.STREAMLIT_APP_URL }} # Armazene a URL como segredo
+        run: python wake_streamlit.py
