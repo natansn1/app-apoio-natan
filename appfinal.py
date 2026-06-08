@@ -910,20 +910,39 @@ elif st.session_state.pagina == "icms":
         for uploaded_file in uploaded_files:
             try:
                 xml_bytes = uploaded_file.read()
+                
+                # Extrai nNF e serie do XML original (antes da correção)
+                try:
+                    tree_original = ET.parse(io.BytesIO(xml_bytes))
+                    root_original = tree_original.getroot()
+                    ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+                    nNF_elem = root_original.find('.//ns:nNF', ns)
+                    serie_elem = root_original.find('.//ns:serie', ns)
+                    numero_nota = nNF_elem.text if nNF_elem is not None else "N/A"
+                    serie_nota = serie_elem.text if serie_elem is not None else "N/A"
+                except Exception as e:
+                    numero_nota = "N/A"
+                    serie_nota = "N/A"
+                
+                # Aplica a correção
                 xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
-                xml_str = xml_corrigido.decode('utf-8').strip()  # remove espaços extras
+                xml_str = xml_corrigido.decode('utf-8').strip()
 
-                with st.expander(f"📄 {uploaded_file.name}", expanded=True):
+                # Título do expander com informações da nota
+                titulo_expander = f"📄 {uploaded_file.name}  |  NF {numero_nota}  |  Série {serie_nota}"
+                with st.expander(titulo_expander, expanded=True):
+                    # Bloco de alterações
                     st.markdown("**🔧 Alterações realizadas:**")
-                    for linha in alteracoes:
-                        st.text(linha)
+                    st.code("\n".join(alteracoes), language="text")
                     
                     st.divider()
-                    st.markdown("**📝 XML corrigido:**")
                     
-                    # Botão de cópia nativo do st.code (já incluso)
+                    # Destaque das informações da nota (opcional, pois já está no título)
+                    st.markdown(f"**📌 Nota Fiscal:** {numero_nota}  |  **Série:** {serie_nota}")
+                    st.markdown("**📝 XML corrigido (passe o mouse para copiar):**")
                     st.code(xml_str, language='xml')
-
+                    
+                    # Botão de download
                     st.download_button(
                         label="📥 Baixar XML corrigido",
                         data=xml_corrigido,
