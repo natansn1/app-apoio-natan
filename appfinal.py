@@ -881,7 +881,6 @@ elif st.session_state.pagina == "tsnull":
                 st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
 
 # ========================
-# ========================
 # PÁGINA CORRETOR DE ICMSSN500
 # ========================
 elif st.session_state.pagina == "icms":
@@ -900,7 +899,7 @@ elif st.session_state.pagina == "icms":
         pass
 
     st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor de ICMSSN500</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #adb5bd;'>Adiciona as tags obrigatórias em blocos ICMSSN500 que estejam incompletas.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Adiciona as tags obrigatórias em blocos ICMSSN500 que estejam incompletos.</p>", unsafe_allow_html=True)
 
     uploaded_files = st.file_uploader("📂 Selecione um ou mais arquivos XML", type="xml", accept_multiple_files=True)
 
@@ -908,7 +907,7 @@ elif st.session_state.pagina == "icms":
         ajustados_zip = io.BytesIO()
         arquivos_para_zip = []
 
-        for uploaded_file in uploaded_files:
+        for idx, uploaded_file in enumerate(uploaded_files):
             try:
                 xml_bytes = uploaded_file.read()
                 xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
@@ -920,30 +919,39 @@ elif st.session_state.pagina == "icms":
                         st.text(linha)
                     
                     st.divider()
-                    st.markdown("**📝 XML corrigido (com botão de cópia):**")
-                    st.code(xml_str, language='xml')
+                    st.markdown("**📝 XML corrigido:**")
                     
-                    col_botao1, col_botao2 = st.columns(2)
-                    with col_botao1:
-                        st.download_button(
-                            label="📥 Baixar XML corrigido",
-                            data=xml_corrigido,
-                            file_name=f"ICMS_FIX_{uploaded_file.name}",
-                            key=f"icms_download_{uploaded_file.name}"
-                        )
-                    with col_botao2:
-                        # Botão opcional para copiar via JavaScript (fallback caso st.code não funcione)
-                        st.markdown(
-                            f"""
-                            <button onclick="navigator.clipboard.writeText({repr(xml_str)})" 
-                                    style="background: #4f46e5; border: none; border-radius: 8px; 
-                                           padding: 0.5rem 1rem; color: white; font-weight: 600; 
-                                           cursor: pointer; width: 100%;">
-                                📋 Copiar XML
-                            </button>
-                            """,
-                            unsafe_allow_html=True
-                        )
+                    # Exibe o XML dentro de um bloco de código
+                    st.code(xml_str, language='xml')
+
+                    # Botão de Copiar (JavaScript confiável)
+                    copy_js = f"""
+                    <script>
+                    function copyXml_{idx}() {{
+                        const xmlText = `{xml_str}`;
+                        navigator.clipboard.writeText(xmlText).then(() => {{
+                            alert('XML copiado para a área de transferência!');
+                        }}).catch(err => {{
+                            console.error('Erro ao copiar: ', err);
+                        }});
+                    }}
+                    </script>
+                    <button onclick="copyXml_{idx}()" 
+                            style="background: #4f46e5; border: none; border-radius: 8px; 
+                                   padding: 0.5rem 1rem; color: white; font-weight: 600; 
+                                   cursor: pointer; width: 100%; margin-top: 0.5rem;">
+                        📋 Copiar XML
+                    </button>
+                    """
+                    st.markdown(copy_js, unsafe_allow_html=True)
+
+                    # Botão de Download
+                    st.download_button(
+                        label="📥 Baixar XML corrigido",
+                        data=xml_corrigido,
+                        file_name=f"ICMS_FIX_{uploaded_file.name}",
+                        key=f"icms_download_{uploaded_file.name}"
+                    )
                 
                 arquivos_para_zip.append((f"ICMS_FIX_{uploaded_file.name}", xml_corrigido))
 
