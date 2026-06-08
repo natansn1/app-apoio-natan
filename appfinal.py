@@ -911,19 +911,20 @@ elif st.session_state.pagina == "icms":
             try:
                 xml_bytes = uploaded_file.read()
                 xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
-                xml_str = xml_corrigido.decode('utf-8').strip()  # remove espaços extras
+                xml_str = xml_corrigido.decode('utf-8').strip()
 
                 with st.expander(f"📄 {uploaded_file.name}", expanded=True):
+                    # Bloco exclusivo para as alterações
                     st.markdown("**🔧 Alterações realizadas:**")
-                    for linha in alteracoes:
-                        st.text(linha)
+                    st.code("\n".join(alteracoes), language="text")
                     
                     st.divider()
-                    st.markdown("**📝 XML corrigido:**")
                     
-                    # Botão de cópia nativo do st.code (já incluso)
+                    # Bloco do XML corrigido (já com botão de cópia nativo do Streamlit)
+                    st.markdown("**📝 XML corrigido (passe o mouse para copiar):**")
                     st.code(xml_str, language='xml')
-
+                    
+                    # Botão de download
                     st.download_button(
                         label="📥 Baixar XML corrigido",
                         data=xml_corrigido,
