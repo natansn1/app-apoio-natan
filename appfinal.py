@@ -274,6 +274,62 @@ def format_xml(element):
     return xml_str.replace('<?xml version="1.0" ?>', '').replace(' xmlns="http://www.portalfiscal.inf.br/nfe"', '').strip()
 
 # ========================
+# FUNÇÃO CORRETORA DE ICMSSN500
+# ========================
+def corrigir_icmssn500(xml_bytes: bytes) -> tuple:
+    """
+    Recebe o XML em bytes, corrige os blocos ICMSSN500 e retorna:
+    (xml_bytes_corrigido, lista_de_alteracoes)
+    """
+    ET.register_namespace('', 'http://www.portalfiscal.inf.br/nfe')
+    tree = ET.parse(io.BytesIO(xml_bytes))
+    root = tree.getroot()
+    alteracoes = []
+
+    for icms in root.findall('.//{*}ICMSSN500'):
+        # Extrai valores existentes
+        valores = {}
+        for child in icms:
+            tag = child.tag.split('}')[-1]
+            valores[tag] = child.text if child.text is not None else ''
+
+        orig = valores.get('orig', '0')
+        csosn = valores.get('CSOSN', '500')
+        vBCSTRet = valores.get('vBCSTRet', '0.00')
+        vICMSSTRet = valores.get('vICMSSTRet', '0.00')
+
+        # Lista de tags que devem existir
+        tags_necessarias = ['pST', 'vICMSSubstituto', 'pRedBCEfet', 'vBCEfet', 'pICMSEfet', 'vICMSEfet']
+        for tag in tags_necessarias:
+            if tag not in valores:
+                alteracoes.append(f"➕ Adicionada tag: {tag}=0.00")
+
+        # Recria o elemento com a ordem correta
+        icms.clear()
+        ET.SubElement(icms, 'orig').text = orig
+        ET.SubElement(icms, 'CSOSN').text = csosn
+        ET.SubElement(icms, 'vBCSTRet').text = vBCSTRet
+        ET.SubElement(icms, 'pST').text = valores.get('pST', '0.00')
+        ET.SubElement(icms, 'vICMSSubstituto').text = valores.get('vICMSSubstituto', '0.00')
+        ET.SubElement(icms, 'vICMSSTRet').text = vICMSSTRet
+        ET.SubElement(icms, 'pRedBCEfet').text = valores.get('pRedBCEfet', '0.00')
+        ET.SubElement(icms, 'vBCEfet').text = valores.get('vBCEfet', '0.00')
+        ET.SubElement(icms, 'pICMSEfet').text = valores.get('pICMSEfet', '0.00')
+        ET.SubElement(icms, 'vICMSEfet').text = valores.get('vICMSEfet', '0.00')
+
+    if not alteracoes:
+        alteracoes.append("✅ Nenhuma alteração necessária (já estava completo).")
+
+    # Gera XML minificado (sem declaração, sem quebras de linha)
+    xml_str = ET.tostring(root, encoding='unicode', method='xml')
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str[xml_str.find('?>')+2:].lstrip()
+    xml_str = re.sub(r'>\s+<', '><', xml_str)
+    xml_str = re.sub(r'\s+', ' ', xml_str)
+
+    return xml_str.encode('utf-8'), alteracoes
+
+# ========================
 # PÁGINA HOME
 # ========================
 if st.session_state.pagina == "home":
@@ -288,7 +344,7 @@ if st.session_state.pagina == "home":
     st.markdown("<h1 style='text-align: center; margin: 2rem 0;'>APOIO - NATAN</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #adb5bd; font-size: 1.1rem;'>Ferramentas projetadas com o intuito de auxiliar no dia a dia.</p>", unsafe_allow_html=True)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         if st.button("🛡️ Corretor de\nEstrutura de Cartão no XML", use_container_width=True):
             st.session_state.pagina = "cartao"
@@ -304,6 +360,10 @@ if st.session_state.pagina == "home":
     with col4:
         if st.button("🧾 Corretor de\nTotal NF-e", use_container_width=True):
             st.session_state.pagina = "total"
+            st.rerun()
+    with col5:
+        if st.button("📑 Corretor de\nICMSSN500", use_container_width=True):
+            st.session_state.pagina = "icms"
             st.rerun()
 
     st.markdown("""
@@ -819,3 +879,70 @@ elif st.session_state.pagina == "tsnull":
 
             except Exception as e:
                 st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
+
+# ========================
+# PÁGINA CORRETOR DE ICMSSN500
+# ========================
+elif st.session_state.pagina == "icms":
+    st.markdown('<div class="back-button">', unsafe_allow_html=True)
+    if st.button("⬅️ Voltar para tela Inicial"):
+        st.session_state.pagina = "home"
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    try:
+        logo = Image.open(logo_file)
+        col1, col2, col3 = st.columns([1, 0.2, 1])
+        with col2:
+            st.image(logo, use_container_width=True)
+    except:
+        pass
+
+    st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor de ICMSSN500</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Adiciona as tags obrigatórias em blocos ICMSSN500 que estejam incompletas.</p>", unsafe_allow_html=True)
+
+    uploaded_files = st.file_uploader("📂 Selecione um ou mais arquivos XML", type="xml", accept_multiple_files=True)
+
+    if uploaded_files:
+        ajustados_zip = io.BytesIO()
+        arquivos_para_zip = []
+
+        for uploaded_file in uploaded_files:
+            try:
+                xml_bytes = uploaded_file.read()
+                xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
+
+                # Exibe detalhes da correção
+                with st.expander(f"📄 {uploaded_file.name}"):
+                    st.markdown("**🔧 Alterações realizadas:**")
+                    for linha in alteracoes:
+                        st.text(linha)
+                    st.divider()
+                    st.download_button(
+                        label="📥 Baixar XML corrigido",
+                        data=xml_corrigido,
+                        file_name=f"ICMS_FIX_{uploaded_file.name}",
+                        key=f"icms_{uploaded_file.name}"
+                    )
+                arquivos_para_zip.append((f"ICMS_FIX_{uploaded_file.name}", xml_corrigido))
+
+            except Exception as e:
+                st.error(f"❌ Erro no arquivo {uploaded_file.name}: {e}")
+
+        # Zip final com todos os corrigidos
+        if arquivos_para_zip:
+            st.divider()
+            with zipfile.ZipFile(ajustados_zip, "w") as zf:
+                for nome, dado in arquivos_para_zip:
+                    zf.writestr(nome, dado)
+            st.markdown('<div class="zip-download">', unsafe_allow_html=True)
+            st.download_button(
+                label="📦 BAIXAR TODOS OS CORRIGIDOS (.ZIP)",
+                data=ajustados_zip.getvalue(),
+                file_name="Pacote_ICMS_FIX.zip",
+                use_container_width=True,
+                key="zip_icms"
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("ℹ️ Nenhum arquivo foi processado. ZIP não será gerado.")
