@@ -279,12 +279,14 @@ def format_xml(element):
 def corrigir_icmssn500(xml_bytes: bytes) -> tuple:
     """
     Recebe o XML em bytes, corrige os blocos ICMSSN500 e retorna:
-    (xml_bytes_corrigido, lista_de_alteracoes)
+    (xml_bytes_corrigido, lista_de_alteracoes_unicas)
     """
     ET.register_namespace('', 'http://www.portalfiscal.inf.br/nfe')
     tree = ET.parse(io.BytesIO(xml_bytes))
     root = tree.getroot()
-    alteracoes = []
+    
+    # Conjunto para armazenar tags que foram adicionadas (sem duplicidade)
+    tags_adicionadas = set()
 
     for icms in root.findall('.//{*}ICMSSN500'):
         # Extrai valores existentes
@@ -302,7 +304,7 @@ def corrigir_icmssn500(xml_bytes: bytes) -> tuple:
         tags_necessarias = ['pST', 'vICMSSubstituto', 'pRedBCEfet', 'vBCEfet', 'pICMSEfet', 'vICMSEfet']
         for tag in tags_necessarias:
             if tag not in valores:
-                alteracoes.append(f"➕ Adicionada tag: {tag}=0.00")
+                tags_adicionadas.add(tag)   # adiciona ao conjunto (sem repetir)
 
         # Recria o elemento com a ordem correta
         icms.clear()
@@ -317,7 +319,12 @@ def corrigir_icmssn500(xml_bytes: bytes) -> tuple:
         ET.SubElement(icms, 'pICMSEfet').text = valores.get('pICMSEfet', '0.00')
         ET.SubElement(icms, 'vICMSEfet').text = valores.get('vICMSEfet', '0.00')
 
-    if not alteracoes:
+    # Gera a lista de alterações a partir do conjunto
+    alteracoes = []
+    if tags_adicionadas:
+        for tag in sorted(tags_adicionadas):   # ordenado para manter consistência
+            alteracoes.append(f"➕ Adicionada tag: {tag}=0.00")
+    else:
         alteracoes.append("✅ Nenhuma alteração necessária (já estava completo).")
 
     # Gera XML minificado (sem declaração, sem quebras de linha)
@@ -924,25 +931,21 @@ elif st.session_state.pagina == "icms":
                     numero_nota = "N/A"
                     serie_nota = "N/A"
                 
-                # Aplica a correção
+                # Aplica a correção (função já corrigida para não duplicar mensagens)
                 xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
                 xml_str = xml_corrigido.decode('utf-8').strip()
 
-                # Título do expander com informações da nota
                 titulo_expander = f"📄 {uploaded_file.name}  |  NF {numero_nota}  |  Série {serie_nota}"
                 with st.expander(titulo_expander, expanded=True):
-                    # Bloco de alterações
                     st.markdown("**🔧 Alterações realizadas:**")
                     st.code("\n".join(alteracoes), language="text")
                     
                     st.divider()
                     
-                    # Destaque das informações da nota (opcional, pois já está no título)
                     st.markdown(f"**📌 Nota Fiscal:** {numero_nota}  |  **Série:** {serie_nota}")
                     st.markdown("**📝 XML corrigido (passe o mouse para copiar):**")
                     st.code(xml_str, language='xml')
                     
-                    # Botão de download
                     st.download_button(
                         label="📥 Baixar XML corrigido",
                         data=xml_corrigido,
