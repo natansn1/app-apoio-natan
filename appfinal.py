@@ -907,11 +907,11 @@ elif st.session_state.pagina == "icms":
         ajustados_zip = io.BytesIO()
         arquivos_para_zip = []
 
-        for idx, uploaded_file in enumerate(uploaded_files):
+        for uploaded_file in uploaded_files:
             try:
                 xml_bytes = uploaded_file.read()
                 xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
-                xml_str = xml_corrigido.decode('utf-8')
+                xml_str = xml_corrigido.decode('utf-8').strip()  # remove espaços extras
 
                 with st.expander(f"📄 {uploaded_file.name}", expanded=True):
                     st.markdown("**🔧 Alterações realizadas:**")
@@ -921,31 +921,9 @@ elif st.session_state.pagina == "icms":
                     st.divider()
                     st.markdown("**📝 XML corrigido:**")
                     
-                    # Exibe o XML dentro de um bloco de código
+                    # Botão de cópia nativo do st.code (já incluso)
                     st.code(xml_str, language='xml')
 
-                    # Botão de Copiar (JavaScript confiável)
-                    copy_js = f"""
-                    <script>
-                    function copyXml_{idx}() {{
-                        const xmlText = `{xml_str}`;
-                        navigator.clipboard.writeText(xmlText).then(() => {{
-                            alert('XML copiado para a área de transferência!');
-                        }}).catch(err => {{
-                            console.error('Erro ao copiar: ', err);
-                        }});
-                    }}
-                    </script>
-                    <button onclick="copyXml_{idx}()" 
-                            style="background: #4f46e5; border: none; border-radius: 8px; 
-                                   padding: 0.5rem 1rem; color: white; font-weight: 600; 
-                                   cursor: pointer; width: 100%; margin-top: 0.5rem;">
-                        📋 Copiar XML
-                    </button>
-                    """
-                    st.markdown(copy_js, unsafe_allow_html=True)
-
-                    # Botão de Download
                     st.download_button(
                         label="📥 Baixar XML corrigido",
                         data=xml_corrigido,
