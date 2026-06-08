@@ -881,6 +881,7 @@ elif st.session_state.pagina == "tsnull":
                 st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
 
 # ========================
+# ========================
 # PÁGINA CORRETOR DE ICMSSN500
 # ========================
 elif st.session_state.pagina == "icms":
@@ -911,25 +912,44 @@ elif st.session_state.pagina == "icms":
             try:
                 xml_bytes = uploaded_file.read()
                 xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
+                xml_str = xml_corrigido.decode('utf-8')
 
-                # Exibe detalhes da correção
-                with st.expander(f"📄 {uploaded_file.name}"):
+                with st.expander(f"📄 {uploaded_file.name}", expanded=True):
                     st.markdown("**🔧 Alterações realizadas:**")
                     for linha in alteracoes:
                         st.text(linha)
+                    
                     st.divider()
-                    st.download_button(
-                        label="📥 Baixar XML corrigido",
-                        data=xml_corrigido,
-                        file_name=f"ICMS_FIX_{uploaded_file.name}",
-                        key=f"icms_{uploaded_file.name}"
-                    )
+                    st.markdown("**📝 XML corrigido (com botão de cópia):**")
+                    st.code(xml_str, language='xml')
+                    
+                    col_botao1, col_botao2 = st.columns(2)
+                    with col_botao1:
+                        st.download_button(
+                            label="📥 Baixar XML corrigido",
+                            data=xml_corrigido,
+                            file_name=f"ICMS_FIX_{uploaded_file.name}",
+                            key=f"icms_download_{uploaded_file.name}"
+                        )
+                    with col_botao2:
+                        # Botão opcional para copiar via JavaScript (fallback caso st.code não funcione)
+                        st.markdown(
+                            f"""
+                            <button onclick="navigator.clipboard.writeText({repr(xml_str)})" 
+                                    style="background: #4f46e5; border: none; border-radius: 8px; 
+                                           padding: 0.5rem 1rem; color: white; font-weight: 600; 
+                                           cursor: pointer; width: 100%;">
+                                📋 Copiar XML
+                            </button>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                
                 arquivos_para_zip.append((f"ICMS_FIX_{uploaded_file.name}", xml_corrigido))
 
             except Exception as e:
                 st.error(f"❌ Erro no arquivo {uploaded_file.name}: {e}")
 
-        # Zip final com todos os corrigidos
         if arquivos_para_zip:
             st.divider()
             with zipfile.ZipFile(ajustados_zip, "w") as zf:
