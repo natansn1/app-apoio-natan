@@ -274,7 +274,7 @@ def format_xml(element):
     return xml_str.replace('<?xml version="1.0" ?>', '').replace(' xmlns="http://www.portalfiscal.inf.br/nfe"', '').strip()
 
 # ========================
-# FUNÇÃO CORRETORA DE ICMSSN500
+# FUNÇÃO CORRETORA DE ICMSSN500 (tags faltantes)
 # ========================
 def corrigir_icmssn500(xml_bytes: bytes) -> tuple:
     """
@@ -337,6 +337,157 @@ def corrigir_icmssn500(xml_bytes: bytes) -> tuple:
     return xml_str.encode('utf-8'), alteracoes
 
 # ========================
+# FUNÇÃO CORRETORA DE ICMS VAZIO (<ICMS />)
+# ========================
+def corrigir_icms_vazio(xml_bytes: bytes) -> tuple:
+    """
+    Substitui todas as ocorrências de <ICMS /> (vazio) pelo grupo ICMSSN500 completo.
+    Retorna (xml_bytes_corrigido, lista_de_alteracoes)
+    """
+    ET.register_namespace('', 'http://www.portalfiscal.inf.br/nfe')
+    try:
+        tree = ET.parse(io.BytesIO(xml_bytes))
+        root = tree.getroot()
+    except ET.ParseError:
+        return xml_bytes, ["⚠️ Não foi possível fazer parsing do XML."]
+
+    # Busca por elementos ICMS vazios (sem filhos)
+    icms_vazios = root.findall('.//*[local-name()="ICMS" and not(*)]')
+    if not icms_vazios:
+        return xml_bytes, ["✅ Nenhum ICMS vazio encontrado."]
+
+    alteracoes = []
+    for icms in icms_vazios:
+        # Cria o novo bloco ICMSSN500 completo
+        novo_icms = ET.Element('ICMS')
+        icmssn500 = ET.SubElement(novo_icms, 'ICMSSN500')
+        ET.SubElement(icmssn500, 'orig').text = '0'
+        ET.SubElement(icmssn500, 'CSOSN').text = '500'
+        ET.SubElement(icmssn500, 'vBCSTRet').text = '0.00'
+        ET.SubElement(icmssn500, 'pST').text = '0.00'
+        ET.SubElement(icmssn500, 'vICMSSubstituto').text = '0.00'
+        ET.SubElement(icmssn500, 'vICMSSTRet').text = '0.00'
+        ET.SubElement(icmssn500, 'pRedBCEfet').text = '0.00'
+        ET.SubElement(icmssn500, 'vBCEfet').text = '0.00'
+        ET.SubElement(icmssn500, 'pICMSEfet').text = '0.00'
+        ET.SubElement(icmssn500, 'vICMSEfet').text = '0.00'
+
+        parent = icms.getparent()
+        if parent is not None:
+            parent.replace(icms, novo_icms)
+            alteracoes.append("➕ Substituído <ICMS /> por bloco ICMSSN500 completo.")
+        else:
+            alteracoes.append("⚠️ Elemento <ICMS /> sem pai – não foi possível substituir.")
+
+    # Gera XML corrigido
+    xml_str = ET.tostring(root, encoding='unicode', method='xml')
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str[xml_str.find('?>')+2:].lstrip()
+    xml_str = re.sub(r'>\s+<', '><', xml_str)
+    xml_str = re.sub(r'\s+', ' ', xml_str)
+
+    return xml_str.encode('utf-8'), alteracoes
+
+# ========================
+# FUNÇÃO CORRETORA DE SCHEMA NFCe (envelopar em <enviNFe>)
+# ========================
+def corrigir_schema_nfce(xml_bytes: bytes) -> tuple:
+    """
+    Corrige a rejeição 'Falha no Schema XML do lote de NFe'.
+
+    - Se a raiz for <NFe>: envelopa em <enviNFe versao="4.00"> com idLote e indSinc.
+    - Se a raiz for <nfeProc>: extrai o <NFe> interno e envelopa em <enviNFe>.
+    - Se a raiz for <enviNFe>: apenas valida/adiciona <idLote> e <indSinc>.
+    - Qualquer outra raiz é considerada não suportada.
+
+    Retorna: (xml_bytes_corrigido, lista_de_alteracoes, status)
+    status ∈ {"corrigido", "ok", "erro"}
+    """
+    NS_URI = 'http://www.portalfiscal.inf.br/nfe'
+    ET.register_namespace('', NS_URI)
+
+    try:
+        tree = ET.parse(io.BytesIO(xml_bytes))
+        root = tree.getroot()
+    except ET.ParseError as e:
+        return xml_bytes, [f"⚠️ XML inválido: {e}"], "erro"
+
+    tag_raiz = root.tag.split('}')[-1] if '}' in root.tag else root.tag
+    alteracoes = []
+
+    def _tag(nome):
+        return f'{{{NS_URI}}}{nome}'
+
+    def _montar_enviNFe(nfe_element):
+        envi = ET.Element(_tag('enviNFe'))
+        envi.set('versao', '4.00')
+        idLote = ET.SubElement(envi, _tag('idLote'))
+        idLote.text = '1'
+        indSinc = ET.SubElement(envi, _tag('indSinc'))
+        indSinc.text = '1'
+        envi.append(nfe_element)
+        return envi
+
+    if tag_raiz == "enviNFe":
+        ns = {'ns': NS_URI}
+        idLote_elem = root.find('ns:idLote', ns)
+        indSinc_elem = root.find('ns:indSinc', ns)
+
+        if idLote_elem is None:
+            novo = ET.Element(_tag('idLote'))
+            novo.text = '1'
+            root.insert(0, novo)
+            alteracoes.append("➕ Adicionado <idLote>1</idLote>")
+        if indSinc_elem is None:
+            novo = ET.Element(_tag('indSinc'))
+            novo.text = '1'
+            root.insert(1, novo)
+            alteracoes.append("➕ Adicionado <indSinc>1</indSinc>")
+
+        if not alteracoes:
+            alteracoes.append("✅ XML já está envelopado em <enviNFe> corretamente.")
+        status = "ok"
+
+    elif tag_raiz == "NFe":
+        envi = _montar_enviNFe(root)
+        alteracoes.append("➕ <NFe> envelopada em <enviNFe versao=\"4.00\">")
+        alteracoes.append("➕ Adicionado <idLote>1</idLote>")
+        alteracoes.append("➕ Adicionado <indSinc>1</indSinc>")
+        if root.find(_tag('Signature')) is None and \
+           root.find('{http://www.w3.org/2000/09/xmldsig#}Signature') is None:
+            alteracoes.append("⚠️ Nenhuma <Signature> encontrada — assine antes de transmitir.")
+        root = envi
+        status = "corrigido"
+
+    elif tag_raiz == "nfeProc":
+        ns = {'ns': NS_URI}
+        nfe_element = root.find('ns:NFe', ns)
+        if nfe_element is None:
+            return xml_bytes, ["⚠️ <nfeProc> sem <NFe> interno."], "erro"
+        root.remove(nfe_element)
+        envi = _montar_enviNFe(nfe_element)
+        alteracoes.append("➕ <NFe> extraída do <nfeProc> e envelopada em <enviNFe>")
+        alteracoes.append("⚠️ <Signature> e <protNFe> do nfeProc original foram descartados.")
+        alteracoes.append("➕ Adicionado <idLote>1</idLote>")
+        alteracoes.append("➕ Adicionado <indSinc>1</indSinc>")
+        root = envi
+        status = "corrigido"
+
+    else:
+        alteracoes.append(
+            f"⚠️ Tag raiz inesperada: <{tag_raiz}>. "
+            "Esperado <NFe>, <nfeProc> ou <enviNFe>."
+        )
+        return xml_bytes, alteracoes, "erro"
+
+    xml_str = ET.tostring(root, encoding='unicode', method='xml')
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str[xml_str.find('?>') + 2:].lstrip()
+    xml_str = re.sub(r'>\s+<', '><', xml_str)
+
+    return xml_str.encode('utf-8'), alteracoes, status
+
+# ========================
 # PÁGINA HOME
 # ========================
 if st.session_state.pagina == "home":
@@ -351,7 +502,7 @@ if st.session_state.pagina == "home":
     st.markdown("<h1 style='text-align: center; margin: 2rem 0;'>APOIO - NATAN</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #adb5bd; font-size: 1.1rem;'>Ferramentas projetadas com o intuito de auxiliar no dia a dia.</p>", unsafe_allow_html=True)
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         if st.button("🛡️ Corretor de\nEstrutura de Cartão no XML", use_container_width=True):
             st.session_state.pagina = "cartao"
@@ -371,6 +522,10 @@ if st.session_state.pagina == "home":
     with col5:
         if st.button("📑 Corretor de\nICMSSN500", use_container_width=True):
             st.session_state.pagina = "icms"
+            st.rerun()
+    with col6:
+        if st.button("🧩 Corretor NFCe\nFalha de Schema", use_container_width=True):
+            st.session_state.pagina = "schema"
             st.rerun()
 
     st.markdown("""
@@ -705,8 +860,8 @@ elif st.session_state.pagina == "total":
 
     st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor total do XML</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #adb5bd;'>Recalcula a soma dos itens e ajusta os campos vProd, vNF e vNFTot (se existir).</p>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #adb5bd;'>Evita a Rejeicao: Total do Produto / Servico difere do somatório dos itens", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #adb5bd;'>(Para os casos onde foi verificado que o imposto do produto não está duplicado e mesmo assim a rejeição segue.)", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Evita a Rejeicao: Total do Produto / Servico difere do somatório dos itens</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>(Para os casos onde foi verificado que o imposto do produto não está duplicado e mesmo assim a rejeição segue.)</p>", unsafe_allow_html=True)
 
     NS = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
     ET.register_namespace('', "http://www.portalfiscal.inf.br/nfe")
@@ -888,7 +1043,7 @@ elif st.session_state.pagina == "tsnull":
                 st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
 
 # ========================
-# PÁGINA CORRETOR DE ICMSSN500
+# PÁGINA CORRETOR DE ICMSSN500 (UNIFICADA)
 # ========================
 elif st.session_state.pagina == "icms":
     st.markdown('<div class="back-button">', unsafe_allow_html=True)
@@ -906,7 +1061,9 @@ elif st.session_state.pagina == "icms":
         pass
 
     st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor de ICMSSN500</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #adb5bd;'>Adiciona as tags obrigatórias em blocos ICMSSN500 que estejam incompletos.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Corrige duas rejeições relacionadas ao ICMS:</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>1) <code>&lt;ICMS /&gt;</code> vazio → substitui pelo bloco completo</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>2) Bloco ICMSSN500 com tags faltantes → adiciona campos obrigatórios zerados</p>", unsafe_allow_html=True)
 
     uploaded_files = st.file_uploader("📂 Selecione um ou mais arquivos XML", type="xml", accept_multiple_files=True)
 
@@ -917,43 +1074,52 @@ elif st.session_state.pagina == "icms":
         for uploaded_file in uploaded_files:
             try:
                 xml_bytes = uploaded_file.read()
-                
-                # Extrai nNF e serie do XML original (antes da correção)
+
+                # 1ª correção: substitui <ICMS /> vazio
+                xml_bytes, alteracoes_vazio = corrigir_icms_vazio(xml_bytes)
+
+                # 2ª correção: completa tags faltantes em ICMSSN500
+                xml_bytes, alteracoes_icmssn500 = corrigir_icmssn500(xml_bytes)
+
+                # Junta as alterações
+                alteracoes = alteracoes_vazio + alteracoes_icmssn500
+
+                xml_str = xml_bytes.decode('utf-8').strip()
+
+                # Extrai dados da nota para exibição
                 try:
-                    tree_original = ET.parse(io.BytesIO(xml_bytes))
-                    root_original = tree_original.getroot()
+                    tree_temp = ET.parse(io.BytesIO(xml_bytes))
+                    root_temp = tree_temp.getroot()
                     ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
-                    nNF_elem = root_original.find('.//ns:nNF', ns)
-                    serie_elem = root_original.find('.//ns:serie', ns)
+                    nNF_elem = root_temp.find('.//ns:nNF', ns)
+                    serie_elem = root_temp.find('.//ns:serie', ns)
                     numero_nota = nNF_elem.text if nNF_elem is not None else "N/A"
                     serie_nota = serie_elem.text if serie_elem is not None else "N/A"
-                except Exception as e:
+                except:
                     numero_nota = "N/A"
                     serie_nota = "N/A"
-                
-                # Aplica a correção (função já corrigida para não duplicar mensagens)
-                xml_corrigido, alteracoes = corrigir_icmssn500(xml_bytes)
-                xml_str = xml_corrigido.decode('utf-8').strip()
 
                 titulo_expander = f"📄 {uploaded_file.name}  |  NF {numero_nota}  |  Série {serie_nota}"
                 with st.expander(titulo_expander, expanded=True):
                     st.markdown("**🔧 Alterações realizadas:**")
-                    st.code("\n".join(alteracoes), language="text")
-                    
+                    if not alteracoes:
+                        st.code("✅ Nenhuma correção necessária.", language="text")
+                    else:
+                        st.code("\n".join(alteracoes), language="text")
+
                     st.divider()
-                    
                     st.markdown(f"**📌 Nota Fiscal:** {numero_nota}  |  **Série:** {serie_nota}")
                     st.markdown("**📝 XML corrigido (passe o mouse para copiar):**")
                     st.code(xml_str, language='xml')
-                    
+
                     st.download_button(
                         label="📥 Baixar XML corrigido",
-                        data=xml_corrigido,
+                        data=xml_bytes,
                         file_name=f"ICMS_FIX_{uploaded_file.name}",
                         key=f"icms_download_{uploaded_file.name}"
                     )
-                
-                arquivos_para_zip.append((f"ICMS_FIX_{uploaded_file.name}", xml_corrigido))
+
+                arquivos_para_zip.append((f"ICMS_FIX_{uploaded_file.name}", xml_bytes))
 
             except Exception as e:
                 st.error(f"❌ Erro no arquivo {uploaded_file.name}: {e}")
@@ -974,3 +1140,100 @@ elif st.session_state.pagina == "icms":
             st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("ℹ️ Nenhum arquivo foi processado. ZIP não será gerado.")
+
+# ========================
+# PÁGINA CORRETOR NFCe - FALHA DE SCHEMA
+# ========================
+elif st.session_state.pagina == "schema":
+    st.markdown('<div class="back-button">', unsafe_allow_html=True)
+    if st.button("⬅️ Voltar para tela Inicial"):
+        st.session_state.pagina = "home"
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    try:
+        logo = Image.open(logo_file)
+        col1, col2, col3 = st.columns([1, 0.2, 1])
+        with col2:
+            st.image(logo, use_container_width=True)
+    except:
+        pass
+
+    st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor NFCe - Falha de Schema</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Resolve a rejeição <b>Falha no Schema XML do lote de NFe</b></p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Envelopa o <code>&lt;NFe&gt;</code> em <code>&lt;enviNFe&gt;</code> com <code>idLote</code> e <code>indSinc</code>.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #adb5bd;'>Também aceita <code>&lt;nfeProc&gt;</code> (extrai a NFe) e <code>&lt;enviNFe&gt;</code> (valida a estrutura).</p>", unsafe_allow_html=True)
+
+    uploaded_files = st.file_uploader("📂 Selecione um ou mais arquivos XML", type="xml", accept_multiple_files=True)
+
+    if uploaded_files:
+        ajustados_zip = io.BytesIO()
+        arquivos_para_zip = []
+
+        for uploaded_file in uploaded_files:
+            try:
+                xml_bytes = uploaded_file.read()
+
+                xml_corrigido, alteracoes, status = corrigir_schema_nfce(xml_bytes)
+
+                if status == "erro":
+                    with st.expander(f"❌ {uploaded_file.name} - Não corrigido", expanded=True):
+                        st.markdown("**🔧 Diagnóstico:**")
+                        st.code("\n".join(alteracoes), language="text")
+                    continue
+
+                # Extrai número/série da nota para exibição
+                numero_nota = "N/A"
+                serie_nota = "N/A"
+                try:
+                    tree_temp = ET.parse(io.BytesIO(xml_corrigido))
+                    root_temp = tree_temp.getroot()
+                    ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+                    nNF_elem = root_temp.find('.//ns:nNF', ns)
+                    serie_elem = root_temp.find('.//ns:serie', ns)
+                    if nNF_elem is not None and nNF_elem.text:
+                        numero_nota = nNF_elem.text
+                    if serie_elem is not None and serie_elem.text:
+                        serie_nota = serie_elem.text
+                except:
+                    pass
+
+                titulo = f"📄 {uploaded_file.name}  |  NF {numero_nota}  |  Série {serie_nota}"
+
+                with st.expander(titulo, expanded=True):
+                    st.markdown("**🔧 Alterações realizadas:**")
+                    st.code("\n".join(alteracoes), language="text")
+
+                    st.divider()
+                    st.markdown(f"**📌 Nota Fiscal:** {numero_nota}  |  **Série:** {serie_nota}")
+                    st.markdown("**📝 XML corrigido:**")
+                    st.code(xml_corrigido.decode('utf-8'), language='xml')
+
+                    st.download_button(
+                        label="📥 Baixar XML Corrigido",
+                        data=xml_corrigido,
+                        file_name=f"SCHEMA_FIX_{uploaded_file.name}",
+                        key=f"schema_dl_{uploaded_file.name}"
+                    )
+
+                arquivos_para_zip.append((f"SCHEMA_FIX_{uploaded_file.name}", xml_corrigido))
+
+            except Exception as e:
+                st.error(f"❌ Erro no arquivo {uploaded_file.name}: {e}")
+
+        if arquivos_para_zip:
+            st.divider()
+            with zipfile.ZipFile(ajustados_zip, "w") as zf:
+                for nome, dado in arquivos_para_zip:
+                    zf.writestr(nome, dado)
+            st.markdown('<div class="zip-download">', unsafe_allow_html=True)
+            st.download_button(
+                label="📦 BAIXAR TODOS OS CORRIGIDOS (.ZIP)",
+                data=ajustados_zip.getvalue(),
+                file_name="Pacote_Schema_NFCe_FIX.zip",
+                use_container_width=True,
+                key="zip_schema"
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("ℹ️ Nenhum arquivo pôde ser processado. ZIP não será gerado.")
