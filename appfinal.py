@@ -340,9 +340,6 @@ def corrigir_icms_vazio(xml_bytes: bytes) -> tuple:
         ET.SubElement(icmssn500, 'pICMSEfet').text = '0.00'
         ET.SubElement(icmssn500, 'vICMSEfet').text = '0.00'
 
-        parent = icms.getparent() if hasattr(icms, 'getparent') else None
-        # ElementTree não tem getparent nativo - vamos usar abordagem alternativa
-        # Procurando o pai percorrendo a árvore
         pai_encontrado = None
         for p in root.iter():
             for filho in list(p):
@@ -370,7 +367,6 @@ def corrigir_icms_vazio(xml_bytes: bytes) -> tuple:
 
 # ============================================================
 # MOTOR DE CORREÇÃO DE NF-e — REJEIÇÕES SEFAZ + REFORMA TRIBUTÁRIA
-# (Portado do corrector.py para Streamlit, trabalhando com bytes)
 # ============================================================
 NS_NFE = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
 NS_URL_NFE = 'http://www.portalfiscal.inf.br/nfe'
@@ -941,16 +937,6 @@ class NFeCorrector:
     # API Pública (trabalha com bytes)
     # ==========================================================
     def corrigir_bytes(self, xml_bytes: bytes, rejeicoes_ativas: List[str]) -> dict:
-        """
-        Retorna dict:
-          {
-            'success': bool,
-            'xml_bytes': bytes (só se success e houve modificação),
-            'modificacoes': List[Modificacao],
-            'mensagem': str,
-            'erro': str,
-          }
-        """
         try:
             tree = ET.parse(io.BytesIO(xml_bytes))
             root = tree.getroot()
@@ -976,7 +962,6 @@ class NFeCorrector:
                 self.log("[5/5] Verificando cClassTrib IBS/CBS...", "info")
                 todas_mods += self._corrigir_classificacao_tributaria_ibscbs(root)
 
-            # Sempre tenta criar/atualizar IBSCBSTot se houver IBSCBS nos itens
             todas_mods += self._atualizar_ibscbs_tot(root)
 
             if not todas_mods:
@@ -1655,30 +1640,85 @@ elif st.session_state.pagina == "rejeicoes":
     except:
         pass
 
-    st.markdown("<h1 style='text-align: center; margin-bottom: 0.5rem;'>Corretor de Rejeições NF-e</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #adb5bd;'>Correção automatizada de rejeições SEFAZ + Reforma Tributária (LC 214/2025)</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 style='text-align: center; margin-bottom: 0.3rem;'>Corretor de Rejeições NF-e</h1>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        "<p style='text-align: center; color: #adb5bd; margin-top: 0;'>"
+        "Correção automatizada de rejeições SEFAZ + Reforma Tributária (LC 214/2025)"
+        "</p>",
+        unsafe_allow_html=True
+    )
 
-    st.markdown("### 🎯 Selecione as rejeições a corrigir")
+    # CSS local apenas desta página — estiliza os cards de rejeição
+    st.markdown("""
+        <style>
+        /* Card de cada rejeição */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 12px !important;
+            border: 1px solid #2b2d35 !important;
+            background: #16181f !important;
+            padding: 0.9rem 1rem 0.6rem 1rem !important;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            height: 100%;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+            border-color: #6366f1 !important;
+            box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
+        }
+        /* Checkbox dentro do card fica mais compacto */
+        div[data-testid="stVerticalBlockBorderWrapper"] label[data-baseweb="checkbox"] {
+            font-size: 0.95rem;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] p {
+            font-size: 0.85rem;
+            color: #adb5bd !important;
+            margin-bottom: 0.4rem;
+        }
+        /* Divisor entre seções */
+        hr {
+            border-color: #2b2d35 !important;
+            margin: 1.2rem 0 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Cabeçalho da seção de seleção
+    st.markdown("#### 🎯 Selecione as rejeições a corrigir")
     st.caption("Marque uma ou mais rejeições. Apenas as selecionadas serão aplicadas em cada XML.")
 
     rejeicoes_selecionadas = []
-    cols = st.columns(2)
-    for idx, (chave, dados) in enumerate(REJEICOES_NFE.items()):
-        with cols[idx % 2]:
-            marcado = st.checkbox(
-                f"{dados['icone']} {dados['titulo']}",
-                key=f"rej_{chave}",
-                help=dados['descricao']
-            )
-            if marcado:
-                rejeicoes_selecionadas.append(chave)
-            st.caption(dados['descricao'])
-            st.markdown("---")
+    colunas = st.columns(2, gap="medium")
 
-    uploaded_files = st.file_uploader("📂 Selecione um ou mais arquivos XML", type="xml", accept_multiple_files=True)
+    for idx, (chave, dados) in enumerate(REJEICOES_NFE.items()):
+        with colunas[idx % 2]:
+            with st.container(border=True):
+                marcado = st.checkbox(
+                    f"{dados['icone']}  {dados['titulo']}",
+                    key=f"rej_{chave}"
+                )
+                st.caption(dados['descricao'])
+                if marcado:
+                    rejeicoes_selecionadas.append(chave)
+
+    st.markdown("---")
+
+    uploaded_files = st.file_uploader(
+        "📂 Selecione um ou mais arquivos XML",
+        type="xml",
+        accept_multiple_files=True
+    )
 
     if uploaded_files and rejeicoes_selecionadas:
-        if st.button("▶  Corrigir XMLs", type="primary"):
+        st.info(
+            f"✅ {len(rejeicoes_selecionadas)} rejeição(ões) selecionada(s) — "
+            f"{len(uploaded_files)} arquivo(s) pronto(s) para processar."
+        )
+
+        if st.button("▶  Corrigir XMLs", type="primary", use_container_width=True):
             corretor = NFeCorrector()
             ajustados_zip = io.BytesIO()
             arquivos_para_zip = []
@@ -1686,7 +1726,6 @@ elif st.session_state.pagina == "rejeicoes":
             for uploaded_file in uploaded_files:
                 try:
                     xml_bytes = uploaded_file.read()
-
                     resultado = corretor.corrigir_bytes(xml_bytes, rejeicoes_selecionadas)
 
                     if not resultado['success']:
@@ -1716,7 +1755,11 @@ elif st.session_state.pagina == "rejeicoes":
                     except:
                         pass
 
-                    titulo = f"✅ {uploaded_file.name}  |  NF {numero_nota}  |  Série {serie_nota}  |  {len(mods)} ajuste(s)"
+                    titulo = (
+                        f"✅ {uploaded_file.name}  |  "
+                        f"NF {numero_nota}  |  Série {serie_nota}  |  "
+                        f"{len(mods)} ajuste(s)"
+                    )
 
                     with st.expander(titulo, expanded=True):
                         st.markdown("**🔧 Alterações realizadas:**")
@@ -1744,6 +1787,7 @@ elif st.session_state.pagina == "rejeicoes":
                 with zipfile.ZipFile(ajustados_zip, "w") as zf:
                     for nome, dado in arquivos_para_zip:
                         zf.writestr(nome, dado)
+
                 st.markdown('<div class="zip-download">', unsafe_allow_html=True)
                 st.download_button(
                     label="📦 BAIXAR TODOS OS CORRIGIDOS (.ZIP)",
